@@ -99,12 +99,20 @@ HEURISTIC = """Standard strong strategy: keep the largest tile locked in one cor
 row and column leading to it in descending order, and never make a move that
 pulls the largest tile out of its corner."""
 
+# Used by the `preview` arm, where the engine has already simulated every move.
+PREVIEW_NOTE = """Each option below states exactly what that move would do, computed for you from
+the current board. You do not need to simulate anything: read the stated
+consequences and pick the move that best serves the objective."""
+
 # The ablation ladder. Each arm adds exactly one block to the one before it.
 ARMS = {
     "bare": (RULES, None),
     "rules": (RULES_DETAILED, None),
     "tips": (RULES_DETAILED, TIPS),
     "coached": (RULES_DETAILED, HEURISTIC),
+    # Not a rung on the ladder: it removes the need to simulate, which separates
+    # "cannot simulate a move" from "cannot choose between known outcomes".
+    "preview": (RULES_DETAILED, PREVIEW_NOTE),
 }
 
 MOVES = {
@@ -132,6 +140,22 @@ def as_grid(board: list[int]) -> list[list[int]]:
     return [board[r * 4 : r * 4 + 4] for r in range(4)]
 
 
+def option_text(direction: str, preview: dict | None) -> str:
+    """The option label. With a preview, it carries the computed outcome."""
+    base = MOVES[direction]
+    if not preview:
+        return base
+    if not preview["changed"]:
+        return f"{base} RESULT: nothing moves; this turn would be wasted."
+    merges = int(preview["merges"])
+    return (
+        f"{base} RESULT: the board changes; "
+        f"{merges} merge(s) for +{preview['gained']} points; "
+        f"{preview['empty_after']} empty cells afterwards (before the new tile spawns); "
+        f"largest tile {preview['max_after']}."
+    )
+
+
 def build_state(state: dict, move_no: int, budget: int, recent: list[dict]) -> dict:
     """The board and its context. Identical for every provider."""
     return {
@@ -155,21 +179,21 @@ def instructions_for(arm: str) -> dict:
     return instructions
 
 
-def build(state: dict, move_no: int, budget: int, arm: str, recent: list[dict], order: list[str]):
+def build(state, move_no, budget, arm, recent, order, previews: dict | None = None):
     """TypeSafe transport: a structured choice question."""
     payload_state = build_state(state, move_no, budget, recent)
     instructions = instructions_for(arm)
     questions = {
         "direction": {
             "type": "choice",
-            "criteria": {d: MOVES[d] for d in order},
+            "criteria": {d: option_text(d, (previews or {}).get(d)) for d in order},
             "instructions": instructions,
         }
     }
     return payload_state, questions
 
 
-def build_chat(state: dict, move_no: int, budget: int, arm: str, recent: list[dict], order: list[str]):
+def build_chat(state, move_no, budget, arm, recent, order, previews: dict | None = None):
     """OpenRouter transport: the same blocks, as chat messages."""
     instructions = instructions_for(arm)
     system = "\n\n".join(
@@ -177,7 +201,7 @@ def build_chat(state: dict, move_no: int, budget: int, arm: str, recent: list[di
         + ([instructions["strategy"]] if "strategy" in instructions else [])
         + ['Reply with JSON: {"direction": "<one of up, down, left, right>"}.']
     )
-    options = "\n".join(f"- {d}: {MOVES[d]}" for d in order)
+    options = "\n".join(f"- {d}: {option_text(d, (previews or {}).get(d))}" for d in order)
     user = (
         f"{json.dumps(build_state(state, move_no, budget, recent), indent=2)}\n\n"
         f"Your options:\n{options}\n\nWhich direction do you play?"
@@ -185,8 +209,8 @@ def build_chat(state: dict, move_no: int, budget: int, arm: str, recent: list[di
     return system, user
 
 
-def decide_typesafe(state, move_no, budget, arm, recent, order, **_kwargs) -> dict:
-    payload_state, questions = build(state, move_no, budget, arm, recent, order)
+def decide_typesafe(state, move_no, budget, arm, recent, order, previews=None, **_kwargs) -> dict:
+    payload_state, questions = build(state, move_no, budget, arm, recent, order, previews)
     body, result, latency_ms = ask(payload_state, questions)
     answer = validate(result["answers"]["direction"], order)
     return {
@@ -203,9 +227,10 @@ def decide_typesafe(state, move_no, budget, arm, recent, order, **_kwargs) -> di
 
 
 def decide_openrouter(
-    state, move_no, budget, arm, recent, order, *, model: str, effort: str = "medium", seed: int | None = None
+    state, move_no, budget, arm, recent, order, *, model: str, effort: str = "medium",
+    seed: int | None = None, previews=None,
 ) -> dict:
-    system, user = build_chat(state, move_no, budget, arm, recent, order)
+    system, user = build_chat(state, move_no, budget, arm, recent, order, previews)
     body, result, latency_ms = openrouter.ask(
         system, user, model=model, effort=effort, seed=seed, order=order
     )

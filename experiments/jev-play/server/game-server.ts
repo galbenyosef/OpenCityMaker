@@ -19,6 +19,7 @@ import {
   continueRun,
   move,
   newRun,
+  slide,
   type Direction,
   type MoveMode,
   type Run,
@@ -97,6 +98,29 @@ const routes: Record<string, (body: any, query: URLSearchParams) => unknown> = {
     const session = get(body.id);
     session.run = continueRun(session.run);
     return view(session);
+  },
+  /**
+   * One-ply consequences of each direction, computed by the engine.
+   *
+   * Lets an experiment hand a model the outcome of every move instead of
+   * requiring it to simulate one, which separates "cannot simulate" from
+   * "cannot choose". `slide` is pure, so probing costs no randomness.
+   */
+  "POST /preview": (body) => {
+    const session = get(body.id);
+    const previews = DIRECTIONS.map((direction) => {
+      const result = slide(session.run.board, direction, session.mode);
+      const changed = !result.board.every((v, i) => v === session.run.board[i]);
+      return {
+        direction,
+        changed,
+        gained: result.points,
+        merges: result.events.filter((e) => e.merged).length / 2,
+        empty_after: result.board.filter((v) => !v).length,
+        max_after: Math.max(...result.board),
+      };
+    });
+    return { id: session.id, previews };
   },
   "GET /health": () => ({ ok: true, sessions: sessions.size }),
 };

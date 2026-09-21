@@ -51,6 +51,10 @@ def run(
             tick = time.perf_counter()
             order = action_order(shuffle, rng)
             kwargs = {"model": model, "effort": effort, "seed": seed} if provider == "openrouter" else {}
+            # The preview arm hands the model each move's computed outcome, so it
+            # never has to simulate one itself.
+            if arm == "preview":
+                kwargs["previews"] = game.preview()
             try:
                 decision = decide(before, n, budget, arm, recent, order, provider=provider, **kwargs)
             except (ValueError, RuntimeError) as error:

@@ -182,6 +182,87 @@ jev answers in **350 ms** for a fraction of a cent. Luna answers in **5–12 s**
 Whether that is worth it depends entirely on whether the task needs the board
 read at all.
 
+## Why does jev fail? Two probes that locate the deficit
+
+The score tables say jev plays badly. They do not say *which* faculty is missing:
+reading the grid, simulating a move, or choosing between known outcomes. Two
+probes separate them, and they agree from opposite directions.
+
+### First, isolate choice from legality
+
+Restricting to boards where **all four moves are legal** removes legality as a
+confound and asks only: given four working moves, does it pick a good one?
+Reference is depth-2 expectimax.
+
+| policy | all-legal boards | picks the best move | mean rank |
+| --- | ---: | ---: | ---: |
+| jev `bare` | 70 | 24.3% | 2.53 |
+| jev `rules` | 69 | 24.6% | 2.49 |
+| luna-low `rules` | 142 | 50.0% | 1.79 |
+| luna-high `rules` | 228 | 53.1% | 1.71 |
+| *chance* | | *25.0%* | *2.50* |
+
+**jev is exactly at chance.** Its probability distribution is equally empty: it
+assigns 0.247 average probability to legal directions and 0.261 to illegal ones
+— slightly backwards. Confidence does not predict the outcome either.
+
+### Probe 1: can it tell which moves are legal?
+
+No game loop, no strategy. 120 real boards, stratified so half contain at least
+one dead direction. Four binary judgements per board, graded against the engine.
+
+| model | per-direction | all four | all four, board has a dead direction | "dead" precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **jev** | **85.0%** | **49.2%** | 13.3% | 48.1% | 18.3% |
+| luna-low | 90.6% | 65.0% | 30.0% | 96.4% | 38.0% |
+| **always answer "yes" (null)** | **85.2%** | **50.0%** | 0.0% | — | 0% |
+
+**jev is indistinguishable from a constant "yes"** — marginally *below* a null
+that ignores the board entirely. The one real signal: when jev does flag a
+direction dead it is right 48.1% of the time against a 14.8% base rate, 3.2×
+chance. But it flags only 27 of 71 dead directions. Real signal, almost never
+deployed. Luna's flags are 96.4% precise.
+
+### Probe 2: hand it the computed consequences
+
+The `preview` arm puts each move's outcome *inside* its option label —
+`"left: the board changes; 2 merge(s) for +8 points; 5 empty cells afterwards"`
+— computed by the engine via `POST /preview`. The model no longer simulates; it
+only chooses.
+
+| policy | score | tile | wasted | picks the best move | mean rank |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| jev `rules` | 1312 | 128 | 26.8% | 24.6% ±10.2 | 2.49 |
+| **jev `preview`** | **5116** | **512** | **0.0%** | 29.5% ±6.2 | 2.26 |
+| luna-low `rules` | 2800 | 256 | 0.4% | **50.0% ±8.2** | 1.79 |
+| **luna-low `preview`** | **2304** | 256 | 0.0% | **32.1% ±8.8** | 2.05 |
+
+**The same intervention has opposite signs.** jev 1312 → 5116; luna 2800 → 2304.
+
+Scores are one game each, so the move-quality columns carry the weight — they
+rest on 69–250 independent decisions. A two-proportion z-test on the change in
+best-move rate:
+
+- luna `rules` → `preview`: **z = 2.84**, significant at 5%
+- jev `rules` → `preview`: z = 0.78, not significant
+
+### What the two probes say together
+
+**jev's deficit is simulation, not choice.** It cannot work out which moves are
+live (Probe 1), and that single failure explains the 26.8% wasted moves, the
+chance-level play and the low score. Its 3.9× gain in Probe 2 came almost
+entirely from wasted moves going to zero — the preview simply *tells* it what it
+could not derive. Its strategic choice barely moved and remains near chance.
+
+**For luna the preview is a distraction, not a prosthetic.** It could already
+simulate (0.4% wasted unaided). Handing it one-ply greedy features appears to
+anchor it on them and crowd out the deeper reasoning that reached 50%.
+
+This is a favourable read for what jev is actually built for. Picking among web
+controls whose consequences are already described in their labels is exactly the
+regime where the prosthetic is free — nothing ever has to derive what a button
+does. 2048 is hostile precisely because it withholds that.
+
 ## The order-bias control
 
 "Prefers up" and "prefers whichever option is listed first" are indistinguishable
@@ -217,8 +298,11 @@ input tokens) because it carries no element list and no `NEXT_ACTION` block.
   Five seeds is enough to see the coaching collapse (95.5% wasted, all five) but
   thin for the `bare` vs `rules` gap, which is the claim most in need of more.
 - Only `jev-latest` / `jev-1.13.0` tested.
-- Still untested: giving the model a one-ply preview per direction (what each
-  move would merge and how many cells it would free), computed by us and placed
-  *inside* each option. The ladder shows prose instructions cannot fix legality —
-  `tips` asked for exactly that and barely moved it — so handing over the
-  computed consequence is the obvious next step.
+- The one-ply preview idea flagged here earlier has now been run; see
+  "Two probes that locate the deficit" above. It helped jev enormously and
+  measurably hurt luna.
+- Still untested: **jev on its own ground.** Every result here is jev on a task
+  that withholds exactly the thing it cannot compute. The reciprocal test —
+  jev against a reasoning LLM on a web-navigation task, measuring latency and
+  cost as well as success — is the one that would say whether jev is *good*,
+  rather than whether 2048 is hard for it.

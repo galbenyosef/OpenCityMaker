@@ -27,6 +27,11 @@ class Game:
         self.state = self._post("/move", {"id": self.id, "direction": direction})
         return self.state
 
+    def preview(self) -> dict[str, dict]:
+        """One-ply consequences per direction, computed by the engine."""
+        result = self._post("/preview", {"id": self.id})
+        return {p["direction"]: p for p in result["previews"]}
+
     def keep_building(self) -> dict:
         """Continue past a 2048 win, mirroring the game's own button."""
         self.state = self._post("/continue", {"id": self.id})

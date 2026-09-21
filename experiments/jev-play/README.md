@@ -61,6 +61,12 @@ A ladder, each arm adding one block to the one before it:
 | `tips` | + evaluative criteria, phrased as things to weigh rather than an order to follow. | 764 |
 | `coached` | + a fixed direction ranking ("strongly prefer left and up"). | 80 |
 
+Plus one arm that is not a rung on that ladder:
+
+| Arm | What it changes |
+| --- | --- |
+| `preview` | Each option label carries the move's **computed** outcome (merges, points, empty cells, or "nothing moves"), from `POST /preview`. The model no longer simulates, it only chooses — which separates "cannot simulate" from "cannot choose". |
+
 Plus one control:
 
 | Flag | What it changes |
@@ -106,7 +112,14 @@ for arm in bare rules tips coached; do
   done
 done
 
-# 4. read the results
+# 4. probe *why* a model fails, rather than just how much
+#    legality: can it tell which directions do anything? (no game loop)
+uv run --env-file .env python -m jev_play.legality --provider typesafe --boards 120
+#    move quality: score every logged board with depth-2 expectimax, then compare
+npx vite-node ../../experiments/jev-play/server/rank-boards.ts -- \
+    --log ../../artifacts/jev/direct-rules/seed-1000/moves.jsonl
+
+# 5. read the results
 uv run python -m jev_play.ladder                       # arms side by side vs baselines
 uv run python -m jev_play.paired --arm direct-rules    # seed-for-seed detail
 uv run python -m jev_play.analyse                      # per-run entropies
@@ -156,6 +169,14 @@ the option ordering, latency and token usage. `run.json` reduces that to:
   Catches a policy that locks onto a single direction and hammers it.
 - confidence split across applied vs. wasted moves — does it know when it
   doesn't know?
+
+## Headline
+
+jev's deficit is **simulation, not choice**. On a legality probe it is
+indistinguishable from always answering "yes" (85.0% vs an 85.2% null), and on
+boards where all four moves are legal it picks the best one at exactly chance.
+Hand it each move's computed outcome and it goes 1312 → 5116. The same help
+measurably *hurts* a reasoning LLM, which could already simulate.
 
 ## Results
 
